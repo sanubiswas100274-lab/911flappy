@@ -1,10 +1,13 @@
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { 
+  BASE_WIDTH,
+  BASE_HEIGHT,
   GAME_WIDTH, 
   GAME_HEIGHT, 
   BIRD_SIZE,
-  DIFFICULTY_SETTINGS
+  DIFFICULTY_SETTINGS,
+  TARGET_FRAME_TIME
 } from '../constants';
 import { Bird, Pipe, Theme, Difficulty, BuildingDetails } from '../types';
 
@@ -33,10 +36,13 @@ const WINDOW_PALETTE = [
 
 const GameCanvas: React.FC<GameCanvasProps> = ({ status, theme, difficulty, onGameOver, onScoreUpdate, onJump }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [bird, setBird] = useState<Bird>({ y: GAME_HEIGHT / 2, velocity: 0, rotation: 0 });
   const [pipes, setPipes] = useState<Pipe[]>([]);
+  const [canvasSize, setCanvasSize] = useState({ width: BASE_WIDTH, height: BASE_HEIGHT });
   
   const settings = DIFFICULTY_SETTINGS[difficulty];
+  const lastFrameTimeRef = useRef<number>(0);
 
   const stateRef = useRef({
     bird: { y: GAME_HEIGHT / 2, velocity: 0, rotation: 0 },
@@ -47,6 +53,42 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, theme, difficulty, onGa
     currentPipeSpeed: settings.pipeSpeed,
     parallaxX: 0
   });
+
+  // Handle responsive canvas sizing
+  useEffect(() => {
+    const updateCanvasSize = () => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      // Get available space
+      const maxWidth = Math.min(window.innerWidth - 16, 600); // Max 600px, with padding
+      const maxHeight = window.innerHeight - 200; // Leave room for UI elements
+      
+      // Calculate size maintaining aspect ratio
+      const aspectRatio = BASE_WIDTH / BASE_HEIGHT;
+      let width = maxWidth;
+      let height = width / aspectRatio;
+      
+      // If height exceeds max, scale down by height instead
+      if (height > maxHeight) {
+        height = maxHeight;
+        width = height * aspectRatio;
+      }
+      
+      // Ensure minimum size for playability
+      const minWidth = 280;
+      if (width < minWidth) {
+        width = minWidth;
+        height = width / aspectRatio;
+      }
+      
+      setCanvasSize({ width: Math.floor(width), height: Math.floor(height) });
+    };
+
+    updateCanvasSize();
+    window.addEventListener('resize', updateCanvasSize);
+    return () => window.removeEventListener('resize', updateCanvasSize);
+  }, []);
 
   useEffect(() => {
     stateRef.current.status = status;
@@ -82,10 +124,19 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, theme, difficulty, onGa
     return () => window.removeEventListener('keydown', handleKey);
   }, [jump]);
 
-  const update = useCallback(() => {
+  const update = useCallback((deltaTime: number) => {
     if (stateRef.current.status !== 'PLAYING') return;
 
     const { bird, pipes, frameCount, score } = stateRef.current;
+
+    // Normalize deltaTime to 60 FPS equivalent
+    // If running at 60fps, deltaFactor = 1.0
+    // If running at 120fps, deltaFactor = 0.5
+    // If running at 30fps, deltaFactor = 2.0
+    const deltaFactor = deltaTime / TARGET_FRAME_TIME;
+    
+    // Clamp deltaFactor to prevent huge jumps (e.g., when tab is backgrounded)
+    const clampedDeltaFactor = Math.min(deltaFactor, 3);
 
     if (score >= 30) {
       onGameOver(30, 'WIN');
@@ -100,8 +151,9 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, theme, difficulty, onGa
       stateRef.current.currentPipeSpeed = settings.pipeSpeed;
     }
 
-    bird.velocity += settings.gravity;
-    bird.y += bird.velocity;
+    // Apply physics with delta time normalization for consistent gravity across devices
+    bird.velocity += settings.gravity * clampedDeltaFactor;
+    bird.y += bird.velocity * clampedDeltaFactor;
     bird.rotation = Math.min(Math.PI / 8, Math.max(-Math.PI / 4, bird.velocity * 0.05));
 
     if (bird.y - BIRD_SIZE / 2 < 0) {
@@ -113,17 +165,18 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, theme, difficulty, onGa
       return;
     }
 
-    stateRef.current.parallaxX += stateRef.current.currentPipeSpeed * 0.4;
+    // Apply delta time to pipe/parallax movement for consistent speed across devices
+    stateRef.current.parallaxX += stateRef.current.currentPipeSpeed * 0.4 * clampedDeltaFactor;
     stateRef.current.pipes = pipes
       .map(p => {
         let newY = p.topHeight;
         if (difficulty === 'HARD' && p.verticalSpeed) {
-            newY += p.verticalSpeed;
+            newY += p.verticalSpeed * clampedDeltaFactor;
             if (newY < 100 || newY > GAME_HEIGHT - settings.pipeGap - 100) {
                 p.verticalSpeed *= -1;
             }
         }
-        return { ...p, x: p.x - stateRef.current.currentPipeSpeed, topHeight: newY };
+        return { ...p, x: p.x - stateRef.current.currentPipeSpeed * clampedDeltaFactor, topHeight: newY };
       })
       .filter(p => p.x + 100 > -100);
 
@@ -326,17 +379,39 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, theme, difficulty, onGa
 
   useEffect(() => {
     let animationFrame: number;
-    const loop = () => { update(); draw(); animationFrame = requestAnimationFrame(loop); };
+    lastFrameTimeRef.current = performance.now();
+    
+    const loop = (currentTime: number) => { 
+      // Calculate delta time (time since last frame)
+      const deltaTime = currentTime - lastFrameTimeRef.current;
+      lastFrameTimeRef.current = currentTime;
+      
+      update(deltaTime); 
+      draw(); 
+      animationFrame = requestAnimationFrame(loop); 
+    };
     animationFrame = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animationFrame);
   }, [update, draw]);
 
+  // Calculate scale factor for responsive display
+  const scale = canvasSize.width / BASE_WIDTH;
+
   return (
-    <canvas ref={canvasRef} width={GAME_WIDTH} height={GAME_HEIGHT}
-      onMouseDown={(e) => { e.preventDefault(); jump(); }}
-      onTouchStart={(e) => { e.preventDefault(); jump(); }}
-      className="max-w-full h-auto cursor-pointer rounded-[40px] shadow-[0_40px_100px_rgba(0,0,0,0.8)] border-[12px] border-zinc-900 bg-black"
-    />
+    <div ref={containerRef} className="w-full flex items-center justify-center">
+      <canvas 
+        ref={canvasRef} 
+        width={BASE_WIDTH} 
+        height={BASE_HEIGHT}
+        onMouseDown={(e) => { e.preventDefault(); jump(); }}
+        onTouchStart={(e) => { e.preventDefault(); jump(); }}
+        style={{
+          width: `${canvasSize.width}px`,
+          height: `${canvasSize.height}px`,
+        }}
+        className="cursor-pointer rounded-[24px] sm:rounded-[32px] md:rounded-[40px] shadow-[0_20px_60px_rgba(0,0,0,0.6)] sm:shadow-[0_30px_80px_rgba(0,0,0,0.7)] md:shadow-[0_40px_100px_rgba(0,0,0,0.8)] border-[8px] sm:border-[10px] md:border-[12px] border-zinc-900 bg-black touch-none"
+      />
+    </div>
   );
 };
 
