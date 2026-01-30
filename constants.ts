@@ -1,14 +1,6 @@
-
-// Base game dimensions (internal logic runs at this resolution)
-export const BASE_WIDTH = 400;
-export const BASE_HEIGHT = 600;
 export const GAME_WIDTH = 400;
 export const GAME_HEIGHT = 600;
 export const BIRD_SIZE = 30;
-
-// Target frame rate for physics normalization (60 FPS)
-export const TARGET_FPS = 60;
-export const TARGET_FRAME_TIME = 1000 / TARGET_FPS; // ~16.67ms
 
 export const CREDIT_COST = 9;
 export const BOUNTY_REWARDS = {
@@ -17,8 +9,6 @@ export const BOUNTY_REWARDS = {
   HARD: 18
 };
 
-// Physics values normalized for 60 FPS
-// These will be multiplied by deltaTime factor in the game loop
 export const DIFFICULTY_SETTINGS = {
   EASY: {
     gravity: 0.12,
